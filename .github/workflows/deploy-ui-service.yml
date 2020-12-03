@@ -1,0 +1,88 @@
+name: deploy-ui-service
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to deploy
+        required: true
+        default: ui
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Build version ${{ github.event.inputs.version }}"
+
+      - name: Checkout metaflow-service
+        uses: actions/checkout@v2
+        with:
+          repository: Netflix/metaflow-service
+          path: metaflow-service
+          ref: ${{ github.event.inputs.version }}
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v1
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v1
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-west-2
+
+      - name: Login to ECR
+        uses: docker/login-action@v1
+        with:
+          registry: 913330534208.dkr.ecr.us-west-2.amazonaws.com
+
+      - run: echo "BUILD_COMMIT_HASH=$(git --git-dir=./metaflow-service/.git rev-parse --short HEAD)" >> $GITHUB_ENV
+      - run: echo "BUILD_TIMESTAMP=$(date +%d-%m-%Y)" >> $GITHUB_ENV
+
+      - name: Build and push
+        uses: docker/build-push-action@v2
+        with:
+          context: ./metaflow-service
+          file: ./metaflow-service/Dockerfile.ui_service
+          push: true
+          build-args: |
+            BUILD_COMMIT_HASH=${{ env.BUILD_COMMIT_HASH }}
+            BUILD_TIMESTAMP=${{ env.BUILD_TIMESTAMP }}
+          tags: |
+            913330534208.dkr.ecr.us-west-2.amazonaws.com/metaflow-ui-service:${{ github.event.inputs.version }}
+
+  deploy:
+    needs: [build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+
+      - run: echo "Deploy version ${{ github.event.inputs.version }}"
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-west-2
+
+      - name: Render Amazon ECS task definition
+        id: task-definition
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: task-definition-ui-service.json
+          container-name: metaflow-ui-service
+          image: 913330534208.dkr.ecr.us-west-2.amazonaws.com/metaflow-ui-service:${{ github.event.inputs.version }}
+
+      - run: echo "Task definition ${{ steps.task-definition.outputs.task-definition }}"
+      - run: cat ${{ steps.task-definition.outputs.task-definition }}
+
+      - name: Deploy to Amazon ECS service
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v1
+        with:
+          task-definition: ${{ steps.task-definition.outputs.task-definition }}
+          service: metaflow-ui-service
+          cluster: oss-dev-ECSCluster-qGcEVCp4PVv6
+          wait-for-service-stability: true
