@@ -67,12 +67,19 @@ jobs:
         with:
           registry: ${{ github.event.inputs.registry }}
 
+      - run: echo "BUILD_COMMIT_HASH=$(git --git-dir=./metaflow-ui/.git rev-parse --short HEAD)" >> $GITHUB_ENV
+      - run: echo "BUILD_TIMESTAMP=$(date +%d-%m-%Y)" >> $GITHUB_ENV
+
       - name: Build and push
         uses: docker/build-push-action@v2
         with:
           context: ./metaflow-ui
           file: ./metaflow-ui/Dockerfile
           push: true
+          build-args: |
+            BUILD_RELEASE_VERSION=${{ github.event.inputs.version }}
+            BUILD_COMMIT_HASH=${{ env.BUILD_COMMIT_HASH }}
+            BUILD_TIMESTAMP=${{ env.BUILD_TIMESTAMP }}
           tags: |
             ${{ github.event.inputs.registry }}/${{ github.event.inputs.repository }}:${{ github.event.inputs.version }}
 
