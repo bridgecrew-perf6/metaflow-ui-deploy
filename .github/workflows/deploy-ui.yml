@@ -1,4 +1,4 @@
-name: deploy-ui-service
+name: deploy-ui
 
 on:
   workflow_dispatch:
@@ -6,7 +6,7 @@ on:
       version:
         description: Version to deploy (git ref)
         required: true
-        default: ui
+        default: master
       region:
         description: AWS region
         required: true
@@ -22,11 +22,12 @@ jobs:
     steps:
       - run: echo "Build version ${{ github.event.inputs.version }}"
 
-      - name: Checkout metaflow-service
+      - name: Checkout metaflow-ui
         uses: actions/checkout@v2
         with:
-          repository: Netflix/metaflow-service
-          path: metaflow-service
+          token: ${{ secrets.ACCESS_TOKEN }} # Private repository
+          repository: Netflix/metaflow-ui
+          path: metaflow-ui
           ref: ${{ github.event.inputs.version }}
 
       - name: Set up QEMU
@@ -46,20 +47,14 @@ jobs:
         with:
           registry: 913330534208.dkr.ecr.us-west-2.amazonaws.com
 
-      - run: echo "BUILD_COMMIT_HASH=$(git --git-dir=./metaflow-service/.git rev-parse --short HEAD)" >> $GITHUB_ENV
-      - run: echo "BUILD_TIMESTAMP=$(date +%d-%m-%Y)" >> $GITHUB_ENV
-
       - name: Build and push
         uses: docker/build-push-action@v2
         with:
-          context: ./metaflow-service
-          file: ./metaflow-service/Dockerfile.ui_service
+          context: ./metaflow-ui
+          file: ./metaflow-ui/Dockerfile
           push: true
-          build-args: |
-            BUILD_COMMIT_HASH=${{ env.BUILD_COMMIT_HASH }}
-            BUILD_TIMESTAMP=${{ env.BUILD_TIMESTAMP }}
           tags: |
-            913330534208.dkr.ecr.us-west-2.amazonaws.com/metaflow-ui-service:${{ github.event.inputs.version }}
+            913330534208.dkr.ecr.us-west-2.amazonaws.com/metaflow-ui:${{ github.event.inputs.version }}
 
   deploy:
     needs: [build]
@@ -78,20 +73,20 @@ jobs:
 
       - name: Fetch current task definition
         run: |
-          aws ecs describe-task-definition --task-definition metaflow-ui-service --query taskDefinition > task-definition.json
+          aws ecs describe-task-definition --task-definition metaflow-ui --query taskDefinition > task-definition.json
 
       - name: Render Amazon ECS task definition
         id: task-definition
         uses: aws-actions/amazon-ecs-render-task-definition@v1
         with:
           task-definition: task-definition.json
-          container-name: metaflow-ui-service
-          image: 913330534208.dkr.ecr.us-west-2.amazonaws.com/metaflow-ui-service:${{ github.event.inputs.version }}
+          container-name: metaflow-ui
+          image: 913330534208.dkr.ecr.us-west-2.amazonaws.com/metaflow-ui:${{ github.event.inputs.version }}
 
       - name: Deploy to Amazon ECS service
         uses: aws-actions/amazon-ecs-deploy-task-definition@v1
         with:
           task-definition: ${{ steps.task-definition.outputs.task-definition }}
-          service: metaflow-ui-service
+          service: metaflow-ui
           cluster: ${{ github.event.inputs.cluster }}
           wait-for-service-stability: false
